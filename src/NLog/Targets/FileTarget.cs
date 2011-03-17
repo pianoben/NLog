@@ -41,6 +41,9 @@ namespace NLog.Targets
     using System.ComponentModel;
     using System.Globalization;
     using System.IO;
+#if !NET_CF && !SILVERLIGHT
+    using System.IO.Compression;
+#endif
     using System.Text;
     using System.Threading;
     using NLog.Common;
@@ -367,6 +370,20 @@ namespace NLog.Targets
         /// </summary>
         /// <docgen category='Archival Options' order='10' />
         public ArchiveNumberingMode ArchiveNumbering { get; set; }
+
+#if !NET_CF && !SILVERLIGHT
+
+        /// <summary>
+        /// Gets or sets a value indicating whether archived files are to be
+        /// compressed.
+        /// </summary>
+        /// <remarks>
+        /// Caution: Enabling this option can considerably slow down your file
+        /// logging.
+        /// </remarks>
+        /// <docgen category='Archival Options' order='10' />
+        public bool CompressArchivedFiles { get; set; }
+#endif
 
         /// <summary>
         /// Gets the characters that are appended after each line.
@@ -710,6 +727,32 @@ namespace NLog.Targets
             pendingContinuations.Clear();
         }
 
+        private void CompressFile(string fileName)
+        {
+#if !NET_CF && !SILVERLIGHT
+            if (!this.CompressArchivedFiles || !File.Exists(fileName))
+            {
+                return;
+            }
+
+            string zipFileName = fileName + ".gz";
+
+            using (FileStream archive = File.OpenRead(fileName))
+            using (GZipStream gzipStream = new GZipStream(File.Create(zipFileName), CompressionMode.Compress, false))
+            {
+                byte[] buffer = new byte[1024 * 32];
+                int read = 0;
+
+                while ((read = archive.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    gzipStream.Write(buffer, 0, read);
+                }
+            }
+
+            File.Delete(fileName);
+#endif
+        }
+
         private void RecursiveRollingRename(string fileName, string pattern, int archiveNumber)
         {
             if (archiveNumber >= this.MaxArchiveFiles)
@@ -745,6 +788,8 @@ namespace NLog.Targets
 
                 File.Move(fileName, newFileName);
             }
+
+            this.CompressFile(newFileName);
         }
 
         private void SequentialArchive(string fileName, string pattern)
@@ -821,6 +866,8 @@ namespace NLog.Targets
 
             string newFileName = ReplaceNumber(pattern, nextNumber);
             File.Move(fileName, newFileName);
+
+            this.CompressFile(newFileName);
         }
 
         private void DoAutoArchive(string fileName, LogEventInfo ev)

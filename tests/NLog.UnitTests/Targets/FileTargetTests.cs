@@ -39,6 +39,7 @@ namespace NLog.UnitTests.Targets
 {
     using System;
     using System.IO;
+    using System.IO.Compression;
     using System.Text;
 
     using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -334,6 +335,87 @@ namespace NLog.UnitTests.Targets
         }
 
         [TestMethod]
+        public void CompressRollingArchiveTest()
+        {
+            // create the file in a not-existent
+            // directory which forces creation
+            string tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+            string tempFile = Path.Combine(tempPath, "file.txt");
+
+            try
+            {
+                FileTarget ft = new FileTarget();
+                ft.FileName = tempFile;
+                ft.ArchiveFileName = Path.Combine(tempPath, "archive/{####}.txt");
+                ft.ArchiveAboveSize = 1000;
+                ft.LineEnding = LineEndingMode.LF;
+                ft.ArchiveNumbering = ArchiveNumberingMode.Rolling;
+                ft.Layout = "${message}";
+                ft.MaxArchiveFiles = 3;
+                ft.CompressArchivedFiles = true;
+
+                SimpleConfigurator.ConfigureForTargetLogging(ft, LogLevel.Debug);
+
+                // we emit 5 * 250 * (3 x aaa + \n) bytes
+                // so that we should get a full file + 3 archives
+                for (int i = 0; i < 250; ++i)
+                {
+                    logger.Debug("aaa");
+                }
+                for (int i = 0; i < 250; ++i)
+                {
+                    logger.Debug("bbb");
+                }
+                for (int i = 0; i < 250; ++i)
+                {
+                    logger.Debug("ccc");
+                }
+                for (int i = 0; i < 250; ++i)
+                {
+                    logger.Debug("ddd");
+                }
+                for (int i = 0; i < 250; ++i)
+                {
+                    logger.Debug("eee");
+                }
+
+                LogManager.Configuration = null;
+
+                AssertFileContents(tempFile,
+                    StringRepeat(250, "eee\n"),
+                    Encoding.UTF8);
+
+                Assert.IsTrue(File.Exists(Path.Combine(tempPath, "archive/000.txt.gz")));
+                Assert.IsTrue(File.Exists(Path.Combine(tempPath, "archive/001.txt.gz")));
+                Assert.IsTrue(File.Exists(Path.Combine(tempPath, "archive/002.txt.gz")));
+                Assert.IsFalse(File.Exists(Path.Combine(tempPath, "archive/003.txt.gz")));
+
+
+
+                AssertCompressedFileContents(
+                    Path.Combine(tempPath, "archive/0000.txt.zip"),
+                    StringRepeat(250, "ddd\n"),
+                    Encoding.UTF8);
+
+                AssertCompressedFileContents(
+                    Path.Combine(tempPath, "archive/0001.txt.zip"),
+                    StringRepeat(250, "ccc\n"),
+                    Encoding.UTF8);
+
+                AssertCompressedFileContents(
+                    Path.Combine(tempPath, "archive/0002.txt.zip"),
+                    StringRepeat(250, "bbb\n"),
+                    Encoding.UTF8);
+
+                Assert.IsTrue(!File.Exists(Path.Combine(tempPath, "archive/0003.txt")));
+            }
+            finally
+            {
+
+            }
+        }
+
+        [TestMethod]
         public void MultiFileWrite()
         {
             // create the file in a not-existent
@@ -531,6 +613,34 @@ namespace NLog.UnitTests.Targets
             Assert.IsNotNull(exceptions[1]);
             Assert.IsNotNull(exceptions[2]);
             Assert.IsNotNull(exceptions[3]);
+        }
+
+        private void AssertCompressedFileContents(string fileName, string content, Encoding encoding)
+        {
+            string tempFile = Path.GetTempFileName();
+
+            try
+            {
+                using (FileStream fs = File.Open(fileName, FileMode.Open, FileAccess.Read))
+                using (GZipStream zs = new GZipStream(fs, CompressionMode.Decompress))
+                using (FileStream tf = File.Open(tempFile, FileMode.Open, FileAccess.Write))
+                {
+                    var buffer = new byte[1024 * 32];
+                    var read = 0;
+
+                    while ((read = zs.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        tf.Write(buffer, 0, read);
+                    }
+                }
+
+                AssertFileContents(tempFile, content, encoding);
+            }
+            finally
+            {
+                if (File.Exists(tempFile))
+                    File.Delete(tempFile);
+            }
         }
     }
 }
